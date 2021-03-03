@@ -14,23 +14,24 @@
  *
  *  Change History:
  *
- *    Date			Who				What
- *    ----			---				----
- *    2017-04-10	Dan Ogorchock  	Original Creation
- *	  2017-08-23  	Allan (vseven) 	Added a generateEvent routine that gets info from the parent device.  This routine runs each time the value is updated which can lead to other modifications of the device.
- *	  2017-08-24  	Allan (vseven) 	Added a lastUpdated attribute that will display on the multitile.
- *    2017-09-09    Allan (vseven)  Added preference to offset the humidity.
+ *    Date        Who            What
+ *    ----        ---            ----
+ *    2017-04-10  Dan Ogorchock  Original Creation
+ *	  2017-08-23  Allan (vseven) Added a generateEvent routine that gets info from the parent device.  This routine runs each time the value is updated which can lead to other modifications of the device.
+ *	  2017-08-24  Allan (vseven) Added a lastUpdated attribute that will display on the multitile.
+ *    2017-09-09  Allan (vseven) Added preference to offset the humidity.
+ *    2018-06-02  Dan Ogorchock  Revised/Simplified for Hubitat Composite Driver Model
+ *    2020-08-16  Dan Ogorchock  Added units
+ *    2020-09-27  Dan Ogrochock  Removed lastUpdated attribute
  *
  * 
  */
 metadata {
-	definition (name: "Child Humidity Sensor", namespace: "ogiewon", author: "Daniel Ogorchock") {
+	definition (name: "Child Humidity Sensor", namespace: "ogiewon", author: "Daniel Ogorchock", vid:"generic-humidity-3") {
 		capability "Relative Humidity Measurement"
 		capability "Sensor"
         
-        attribute "lastUpdated", "String"
-        
-		command "generateEvent", ["string", "string"]
+//        attribute "lastUpdated", "String"
 	}
 
 	simulator {
@@ -39,7 +40,7 @@ metadata {
     
 	preferences {
 		section("Prefs") {
-			input title: "Humidity Offset", description: "This feature allows you to correct any humidity variations by selecting an offset. Ex: If your sensor consistently reports a humidity that's 6% higher then a similiar calibrated sensor, you'd enter \"-6\".", displayDuringSetup: false, type: "paragraph", element: "paragraph"
+//			input title: "Humidity Offset", description: "This feature allows you to correct any humidity variations by selecting an offset. Ex: If your sensor consistently reports a humidity that's 6% higher then a similiar calibrated sensor, you'd enter \"-6\".", displayDuringSetup: false, type: "paragraph", element: "paragraph"
 			input "humidityOffset", "number", title: "Humidity Offset in Percent", description: "Adjust humidity by this percentage", range: "*..*", displayDuringSetup: false
 		}
 	}
@@ -59,26 +60,37 @@ metadata {
                     ])
                 }
                 
-             tileAttribute("device.lastUpdated", key: "SECONDARY_CONTROL") {
-    			attributeState("default", label:'    Last updated ${currentValue}',icon: "st.Health & Wellness.health9")
-             }
+//             tileAttribute("device.lastUpdated", key: "SECONDARY_CONTROL") {
+//    			attributeState("default", label:'    Last updated ${currentValue}',icon: "st.Health & Wellness.health9")
+//             }
 		}
 		main(["humidity"])
         details(["humidity", "lastUpdated"])
 	}
 }
 
-def generateEvent(String name, String value) {
-	//log.debug("Passed values to routine generateEvent in device named $device: Name - $name  -  Value - $value")
-	// Offset the humidity based on preference
-    def offsetValue = Math.round((Float.parseFloat(value))*100.0)/100.0d
-    if (humidityOffset) {
-    	offsetValue = offsetValue + humidityOffset
+def parse(String description) {
+    log.debug "parse(${description}) called"
+	def parts = description.split(" ")
+    def name  = parts.length>0?parts[0].trim():null
+    def value = parts.length>1?parts[1].trim():null
+    if (name && value) {
+        // Offset the humidity based on preference
+        def offsetValue = Math.round((Float.parseFloat(value))*100.0)/100.0d
+        if (humidityOffset) {
+            offsetValue = offsetValue + humidityOffset
+        }
+        // Update device
+        sendEvent(name: name, value: offsetValue, unit: "%")
+//        // Update lastUpdated date and time
+//        def nowDay = new Date().format("MMM dd", location.timeZone)
+//        def nowTime = new Date().format("h:mm a", location.timeZone)
+//        sendEvent(name: "lastUpdated", value: nowDay + " at " + nowTime, displayed: false)
     }
-    // Update device
-	sendEvent(name: name,value: offsetValue)
-    // Update lastUpdated date and time
-    def nowDay = new Date().format("MMM dd", location.timeZone)
-    def nowTime = new Date().format("h:mm a", location.timeZone)
-    sendEvent(name: "lastUpdated", value: nowDay + " at " + nowTime, displayed: false)
+    else {
+    	log.debug "Missing either name or value.  Cannot parse!"
+    }
+}
+
+def installed() {
 }

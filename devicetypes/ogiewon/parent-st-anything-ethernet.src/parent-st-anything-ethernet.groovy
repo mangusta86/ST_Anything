@@ -27,16 +27,41 @@
  *    2017-10-07  Dan Ogorchock  Cleaned up formatting for readability
  *    2017-09-24  Allan (vseven) Added RGBW LED strip support with a setColorRGBW routine
  *    2017-12-29  Dan Ogorchock  Added WiFi RSSI value per request from ST user @stevesell
+ *    2018-02-15  Dan Ogorchock  Added @saif76's Ultrasonic Sensor
+ *    2018-02-25  Dan Ogorchock  Added Child Presence Sensor
+ *    2018-03-03  Dan Ogorchock  Added Child Power Meter
+ *    2018-06-05  Dan Ogorchock  Simplified Parent & Child Device Handlers
+ *    2018-06-24  Dan Ogorchock  Added Child Servo
+ *    2018-07-01  Dan Ogorchock  Added Pressure Measurement
+ *    2018-08-06  Dan Ogorchock  Added MAC Address formatting before setting deviceNetworkID
+ *    2019-02-05  Dan Ogorchock  Added Child Energy Meter
+ *    2019-02-09  Dan Ogorchock  Attempt to prevent duplicate devices from being created
+ *    2019-09-08  Dan Ogorchock  Minor tweak to Button logic due to changes in the the Arduino IS_Button.cpp code
+ *    2019-10-31  Dan Ogorchock  Added Child Valve
+ *    2020-04-11  Dan Ogorchock  Automatically configure the number of buttons
+ *    2020-04-11  Dan Ogorchock  Added Delete All Children tile to assist in troubleshooting - uncomment tile and use with care if desired!!!
+ *    2020-04-18  Dan Ogorchock  Added Presence Capability and tile to know if the ST_Anything device is online (present) or offline (not present)
+ *    2020-04-18  Dan Ogorchock  Removed the Configuration capability and tile as it is no longer used
+ *    2020-05-14  Dan Ogorchock  Removed 'defaultValue' fields on user unputs due to bug in ST Classic App for Android 
+ *    2020-05-16  Dan Ogorchock  Added support for Sound Pressure Level device
+ *    2020-09-24  Dan Ogorchock  Modified to have child devices work better with 'New' ST App
+ *    2020-12-11  Dan Ogorchock  Added Window Shade
+ *    2020-01-14  Andrew Alsup   Improved support for the 'New" SmartThings Mobile App!  Thank you!
  *
+ *	
  */
  
 metadata {
-	definition (name: "Parent_ST_Anything_Ethernet", namespace: "ogiewon", author: "Dan Ogorchock") {
-        capability "Configuration"
-        capability "Refresh"
+	definition (name: "Parent_ST_Anything_Ethernet", namespace: "ogiewon", author: "Dan Ogorchock", mnmn: "SmartThingsCommunity", vid: "5eb3144b-8bfb-37e4-90b6-021bc1223638") {
+        //capability "Configuration"
         capability "Button"
         capability "Holdable Button"
-        capability "Signal Strength"   
+        capability "Signal Strength"
+        capability "Presence Sensor"  //used to determine is the Arduino microcontroller is still reporting data or not
+        capability "afterwatch06989.refresh"
+        
+        command "sendData", ["string"]
+        //command "deleteAllChildDevices"
 	}
 
     simulator {
@@ -44,41 +69,10 @@ metadata {
 
     // Preferences
 	preferences {
-		input "ip", "text", title: "Arduino IP Address", description: "IP Address in form 192.168.1.226", required: true, displayDuringSetup: true
+    	input "ip", "text", title: "Arduino IP Address", description: "IP Address in form 192.168.1.226", required: true, displayDuringSetup: true
 		input "port", "text", title: "Arduino Port", description: "port in form of 8090", required: true, displayDuringSetup: true
 		input "mac", "text", title: "Arduino MAC Addr", description: "MAC Address in form of 02A1B2C3D4E5", required: true, displayDuringSetup: true
-		input "numButtons", "number", title: "Number of Buttons", description: "Number of Buttons, 0 to n", required: true, displayDuringSetup: true
-	}
-
-	// Tile Definitions
-	tiles (scale: 2){
-		standardTile("refresh", "device.refresh", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
-			state "default", label:'Refresh', action: "refresh.refresh", icon: "st.secondary.refresh-icon"
-		}
-        
-		standardTile("configure", "device.configure", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
-			state "configure", label:'Configure', action:"configuration.configure", icon:"st.secondary.tools"
-		}
-
-        valueTile("numberOfButtons", "device.numberOfButtons", inactiveLabel: false, width: 2, height: 2) {
-			state "numberOfButtons", label:'${currentValue} buttons', unit:""
-		}
-
-        valueTile("rssi", "device.rssi", width: 2, height: 2) {
-			state("rssi", label:'RSSI ${currentValue}', unit:"",
-				backgroundColors:[
-					[value: -30, color: "#00cc00"],
-					[value: -45, color: "#33cc33"],
-					[value: -60, color: "#66ff33"],
-					[value: -70, color: "#99ff33"],
-					[value: -80, color: "#ffcc00"],
-					[value: -85, color: "#ff9900"],
-					[value: -90, color: "#ff0000"]
-				]
-			)
-		}
-
-		childDeviceTiles("all")
+		input "timeOut", "number", title: "Timeout in Seconds", description: "Arduino max time (try 900)", range: "120..86400", required: true, displayDuringSetup:true
 	}
 }
 
@@ -105,12 +99,34 @@ def parse(String description) {
         def namenum = name.substring(namebase.length()).trim()
 		
         def results = []
+ 
+        if (device.currentValue("presence") != "present") {
+            sendEvent(name: "presence", value: "present", isStateChange: true, descriptionText: "New update received from Arduino device")
+        }
+        
+		if (timeOut != null) {
+            runIn(timeOut, timeOutArduino)
+        } else {
+           	log.info "Using 900 second default timeout.  Please set the timeout setting appropriately and then click save."
+           	runIn(900, timeOutArduino)
+        }
         
 		if (name.startsWith("button")) {
 			//log.debug "In parse:  name = ${name}, value = ${value}, btnName = ${name}, btnNum = ${namemun}"
-        	results = createEvent([name: namebase, value: value, data: [buttonNumber: namenum], descriptionText: "${namebase} ${namenum} was ${value} ", isStateChange: true, displayed: true])
-			log.debug results
-			return results
+             if (state.numButtons < namenum.toInteger()) {
+                state.numButtons = namenum.toInteger()
+                sendEvent(name: "numberOfButtons", value: state.numButtons)
+            }
+            
+            if ((value == "pushed") || (value == "held")) {
+                results = createEvent([name: namebase, value: value, data: [buttonNumber: namenum], descriptionText: "${namebase} ${namenum} was ${value} ", isStateChange: true, displayed: true])
+                log.debug results
+                return results
+            }
+            else
+            {
+                return
+            }
         }
 
 		if (name.startsWith("rssi")) {
@@ -120,66 +136,24 @@ def parse(String description) {
 			return results
         }
 
-
         def isChild = containsDigit(name)
    		//log.debug "Name = ${name}, isChild = ${isChild}, namebase = ${namebase}, namenum = ${namenum}"      
-        //log.debug "parse() childDevices.size() =  ${childDevices.size()}"
-
-		def childDevice = null
 
 		try {
-
-            childDevices.each {
-				try{
-            		//log.debug "Looking for child with deviceNetworkID = ${device.deviceNetworkId}-${name} against ${it.deviceNetworkId}"
-                	if (it.deviceNetworkId == "${device.deviceNetworkId}-${name}") {
-                	childDevice = it
-                    //log.debug "Found a match!!!"
-                	}
-            	}
-            	catch (e) {
-            	//log.debug e
-            	}
-        	}
+            def childDevice = childDevices.find{it.deviceNetworkId == "${device.deviceNetworkId}-${name}"}
+            //if (childDevice) log.debug "childDevice.deviceNetworkId = ${childDevice.deviceNetworkId}"
             
             //If a child should exist, but doesn't yet, automatically add it!            
         	if (isChild && childDevice == null) {
         		log.debug "isChild = true, but no child found - Auto Add it!"
-            	//log.debug "    Need a ${namebase} with id = ${namenum}"
-            
-            	createChildDevice(namebase, namenum)
-            	//find child again, since it should now exist!
-            	childDevices.each {
-					try{
-            			//log.debug "Looking for child with deviceNetworkID = ${device.deviceNetworkId}-${name} against ${it.deviceNetworkId}"
-                		if (it.deviceNetworkId == "${device.deviceNetworkId}-${name}") {
-                			childDevice = it
-                    		//log.debug "Found a match!!!"
-                		}
-            		}
-            		catch (e) {
-            			//log.debug e
-            		}
-        		}
-        	}
+            	//log.debug "    Need a ${namebase} with id = ${namenum}"            
+            	childDevice = createChildDevice(namebase, namenum)
+			}   
             
             if (childDevice != null) {
                 //log.debug "parse() found child device ${childDevice.deviceNetworkId}"
-                
-//                if (namebase == "temperature") {
-//                	double tempC = fahrenheitToCelsius(value.toFloat())  //convert from Farenheit to Celsius
-//                   	value = tempC.round(2)
-//				}
-                
-//                if (namebase == "dimmerSwitch") { namebase = "switch"}  //use a "switch" attribute to maintain standards
-//                childDevice.sendEvent(name: namebase, value: value)
-                childDevice.generateEvent(namebase, value)
+                childDevice.parse("${namebase} ${value}")
 				log.debug "${childDevice.deviceNetworkId} - name: ${namebase}, value: ${value}"
-                //If event was dor a "Door Control" device, also update the child door control device's "Contact Sensor" to keep everything in synch
-//                if (namebase == "doorControl") {
-//                	childDevice.sendEvent(name: "contact", value: value)
-//                    log.debug "${childDevice.deviceNetworkId} - name: contact, value: ${value}"
-//                }
             }
             else  //must not be a child, perform normal update
             {
@@ -191,7 +165,6 @@ def parse(String description) {
         catch (e) {
         	log.error "Error in parse() routine, error = ${e}"
         }
-
 	}
 }
 
@@ -203,8 +176,12 @@ private getHostAddress() {
     return ip + ":" + port
 }
 
+def sendData(message) {
+    sendEthernet(message) 
+}
+
 def sendEthernet(message) {
-	log.debug "Executing 'sendEthernet' ${message}"
+	log.debug "Executing 'sendEthernet( \"${message}\" )'"
 	if (settings.ip != null && settings.port != null) {
         sendHubCommand(new physicalgraph.device.HubAction(
             method: "POST",
@@ -218,112 +195,10 @@ def sendEthernet(message) {
     }
 }
 
-// handle commands
-def childAlarmOn(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childAlarmOn($dni), name = ${name}"
-    sendEthernet("${name} both")
-}
-
-def childAlarmSiren(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childAlarmOn($dni), name = ${name}"
-    sendEthernet("${name} siren")
-}
-
-def childAlarmStrobe(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childAlarmOn($dni), name = ${name}"
-    sendEthernet("${name} strobe")
-}
-
-def childAlarmBoth(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childAlarmOn($dni), name = ${name}"
-    sendEthernet("${name} both")
-}
-
-def childAlarmOff(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childAlarmOff($dni), name = ${name}"
-    sendEthernet("${name} off")
-}
-
-def childAlarmTest(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childAlarmTest($dni), name = ${name}"
-    sendEthernet("${name} both")
-	runIn(3, childAlarmTestOff, [data: [devicenetworkid: dni]])
-}
-
-def childAlarmTestOff(data) {
-	childAlarmOff(data.devicenetworkid)
-}
-
-void childDoorOpen(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childDoorOpen($dni), name = ${name}"
-    sendEthernet("${name} on")
-}
-
-void childDoorClose(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childDoorClose($dni), name = ${name}"
-    sendEthernet("${name} on")
-}
-
-void childOn(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childOn($dni), name = ${name}"
-    sendEthernet("${name} on")
-}
-
-void childOff(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childOff($dni), name = ${name}"
-    sendEthernet("${name} off")
-}
-
-void childSetLevel(String dni, value) {
-    def name = dni.split("-")[-1]
-    log.debug "childSetLevel($dni), name = ${name}, level = ${value}"
-    sendEthernet("${name} ${value}")
-}
-
-void childSetColorRGB(String dni, value) {
-    def name = dni.split("-")[-1]
-    log.debug "childSetColorRGB($dni), name = ${name}, colorRGB = ${value}"
-    sendEthernet("${name} ${value}")
-}
-
-void childSetColorRGBW(String dni, value) {
-    def name = dni.split("-")[-1]
-    log.debug "childSetColorRGBW($dni), name = ${name}, colorRGBW = ${value}"
-    sendEthernet("${name} ${value}")
-}
-
-void childRelayOn(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childRelayOn($dni), name = ${name}"
-    sendEthernet("${name} on")
-}
-
-void childRelayOff(String dni) {
-    def name = dni.split("-")[-1]
-    log.debug "childRelayOff($dni), name = ${name}"
-    sendEthernet("${name} off")
-}
-
-def configure() {
-	log.debug "Executing 'configure()'"
-    updateDeviceNetworkID()
-	sendEvent(name: "numberOfButtons", value: numButtons)
-}
-
+// refresh capability command callback
 def refresh() {
 	log.debug "Executing 'refresh()'"
 	sendEthernet("refresh")
-	sendEvent(name: "numberOfButtons", value: numButtons)
 }
 
 def installed() {
@@ -333,48 +208,63 @@ def installed() {
     }
     else
     {
-        state.alertMessage = "ST_Anything Parent Device has not yet been fully configured. Click the 'Gear' icon, enter data for all fields, and click 'Done'"
-        runIn(2, "sendAlert")
+        log.info "ST_Anything Parent Device has not yet been fully configured. Click the 'Gear' icon, enter data for all fields, and click 'Done'"
+        //state.alertMessage = "ST_Anything Parent Device has not yet been fully configured. Click the 'Gear' icon, enter data for all fields, and click 'Done'"
+        //runIn(2, "sendAlert")
     }
+
+    state.numButtons = 0
+    sendEvent(name: "numberOfButtons", value: state.numButtons)
+}
+
+def uninstalled() {
+    deleteAllChildDevices()
 }
 
 def initialize() {
 	log.debug "Executing 'initialize()'"
-    sendEvent(name: "numberOfButtons", value: numButtons)
 }
+
 def updated() {
 	if (!state.updatedLastRanAt || now() >= state.updatedLastRanAt + 5000) {
 		state.updatedLastRanAt = now()
 		log.debug "Executing 'updated()'"
     	runIn(3, "updateDeviceNetworkID")
-		sendEvent(name: "numberOfButtons", value: numButtons)
+
         log.debug "Hub IP Address = ${device.hub.getDataValue("localIP")}"
         log.debug "Hub Port = ${device.hub.getDataValue("localSrvPortTCP")}"
+
+        //Schedule inactivity timeout
+        log.info "Device inactivity timer started for ${timeOut} seconds"
+        runIn(timeOut, timeOutArduino)
+
 	}
 	else {
-//		log.trace "updated(): Ran within last 5 seconds so aborting."
+		//log.trace "updated(): Ran within last 5 seconds so aborting."
 	}
 }
 
-
 def updateDeviceNetworkID() {
 	log.debug "Executing 'updateDeviceNetworkID'"
-    if(device.deviceNetworkId!=mac) {
-    	log.debug "setting deviceNetworkID = ${mac}"
-        device.setDeviceNetworkId("${mac}")
+    def formattedMac = mac.toUpperCase()
+    formattedMac = formattedMac.replaceAll(":", "")
+    if(device.deviceNetworkId!=formattedMac) {
+        log.debug "setting deviceNetworkID = ${formattedMac}"
+        device.setDeviceNetworkId("${formattedMac}")
 	}
     //Need deviceNetworkID updated BEFORE we can create Child Devices
 	//Have the Arduino send an updated value for every device attached.  This will auto-created child devices!
 	refresh()
 }
 
-private void createChildDevice(String deviceName, String deviceNumber) {
+private createChildDevice(String deviceName, String deviceNumber) {
+    def deviceHandlerName = ""
     if ( device.deviceNetworkId =~ /^[A-Z0-9]{12}$/) {
     
 		log.trace "createChildDevice:  Creating Child Device '${device.displayName} (${deviceName}${deviceNumber})'"
         
 		try {
-        	def deviceHandlerName = ""
+        	
         	switch (deviceName) {
          		case "contact": 
                 		deviceHandlerName = "Child Contact Sensor" 
@@ -430,18 +320,50 @@ private void createChildDevice(String deviceName, String deviceNumber) {
          		case "doorControl": 
                 		deviceHandlerName = "Child Door Control" 
                 	break
+         		case "ultrasonic": 
+                		deviceHandlerName = "Child Ultrasonic Sensor" 
+                	break
+         		case "presence": 
+                		deviceHandlerName = "Child Presence Sensor" 
+                	break
+         		case "power": 
+                		deviceHandlerName = "Child Power Meter" 
+                	break
+         		case "energy": 
+                		deviceHandlerName = "Child Energy Meter" 
+                	break
+         		case "servo": 
+                		deviceHandlerName = "Child Servo" 
+                	break
+         		case "pressure": 
+                		deviceHandlerName = "Child Pressure Measurement" 
+                	break
+         		case "soundPressureLevel": 
+                		deviceHandlerName = "Child Sound Pressure Level" 
+                	break
+         		case "valve": 
+                		deviceHandlerName = "Child Valve" 
+                	break
+         		case "windowShade": 
+                		deviceHandlerName = "Child Window Shade" 
+                	break        
 			default: 
                 		log.error "No Child Device Handler case for ${deviceName}"
       		}
             if (deviceHandlerName != "") {
-         		addChildDevice(deviceHandlerName, "${device.deviceNetworkId}-${deviceName}${deviceNumber}", null,
+//                return addChildDevice(deviceHandlerName, "${device.deviceNetworkId}-${deviceName}${deviceNumber}", null,
+//         			[completedSetup: true, label: "${device.displayName} (${deviceName}${deviceNumber})", 
+//                	isComponent: false, componentName: "${deviceName}${deviceNumber}", componentLabel: "${deviceName} ${deviceNumber}"])
+                return addChildDevice(deviceHandlerName, "${device.deviceNetworkId}-${deviceName}${deviceNumber}", null,
          			[completedSetup: true, label: "${device.displayName} (${deviceName}${deviceNumber})", 
-                	isComponent: false, componentName: "${deviceName}${deviceNumber}", componentLabel: "${deviceName} ${deviceNumber}"])
+                	isComponent: false])
         	}   
     	} catch (e) {
-        	log.error "Child device creation failed with error = ${e}"
-        	state.alertMessage = "Child device creation failed. Please make sure that the '${deviceHandlerName}' is installed and published."
-	    	runIn(2, "sendAlert")
+        	log.error "${deviceName}${deviceNumber} child device creation of type '${deviceHandlerName}' failed with error = ${e}"
+        	log.error "Please delete/remove the offending child device in the ST Classic App, and then click Refresh on the Parent Device to have the child created again." 
+            
+            //state.alertMessage = "Child device creation failed. Please make sure that the '${deviceHandlerName}' is installed and published."
+	    	//runIn(2, "sendAlert")
     	}
 	} else 
     {
@@ -464,8 +386,34 @@ private boolean containsDigit(String s) {
     boolean containsDigit = false;
 
     if (s != null && !s.isEmpty()) {
-//		log.debug "containsDigit .matches = ${s.matches(".*\\d+.*")}"
+		//log.debug "containsDigit .matches = ${s.matches(".*\\d+.*")}"
 		containsDigit = s.matches(".*\\d+.*")
     }
     return containsDigit
 }
+
+def timeOutArduino() {
+    //If the timeout expires before being reset, mark this Parent Device as 'not present' to allow action to be taken
+    log.info "No update received from Arduino device in past ${timeOut} seconds"
+    sendEvent(name: "presence", value: "not present", isStateChange: true, descriptionText: "No update received from Arduino device in past ${timeOut} seconds")
+}
+
+def deleteAllChildDevices() {
+    log.info "Deleting all Child Devices"
+    getChildDevices().each {
+        deleteChildDevice(it.deviceNetworkId)
+    }
+    state.numButtons = 0    
+    sendEvent(name: "numberOfButtons", value: state.numButtons)
+}
+
+/*
+def mywait(ms) {
+    log.info "starting wait"
+	def start = now()
+	while (now() < start + ms) {
+    	// hurry up and wait!
+    }
+    log.info "ending wait"
+}
+*/

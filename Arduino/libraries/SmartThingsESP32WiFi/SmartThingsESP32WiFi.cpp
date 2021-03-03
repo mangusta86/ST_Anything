@@ -9,6 +9,11 @@
 //  2017-09-05  Dan Ogorchock  Added automatic WiFi reconnect logic as ESP32 
 //                             doesn't do this automatically currently
 //  2018-01-01  Dan Ogorchock  Added WiFi.RSSI() data collection
+//  2018-01-06  Dan Ogorchock  Simplified the MAC address printout to prevent confusion
+//  2018-02-03  Dan Ogorchock  Support for Hubitat
+//  2020-04-10  Dan Ogorchock  Improved network performance by disabling WiFi Sleep
+//  2020-06-20  Dan Ogorchock  Add user selectable host name (repurposing the old shieldType variable)
+//
 //*******************************************************************************
 
 #include "SmartThingsESP32WiFi.h"
@@ -95,10 +100,13 @@ namespace st
 	//*******************************************************************************
 	void SmartThingsESP32WiFi::init(void)
 	{
+		WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
+
 		// delete old config
 		WiFi.disconnect(true);
 		delay(1000);
 		WiFi.onEvent(SmartThingsESP32WiFi::WiFiEvent);
+
 
 		//Turn off Wirelss Access Point
 		Serial.println(F("Disabling ESP32 WiFi Access Point"));
@@ -106,6 +114,25 @@ namespace st
 		WiFi.mode(WIFI_STA);
 		//WiFi.setAutoReconnect(true);
 		//WiFi.setAutoConnect(true);
+		WiFi.setSleep(false);
+
+		//get the MAC address
+		String strMAC(WiFi.macAddress());
+		strMAC.replace(":", "");
+
+		//Set the hostname
+		if (_shieldType == "ESP32Wifi") {
+			String("ESP32-" + strMAC).toCharArray(st_devicename, sizeof(st_devicename));
+		}
+		else {
+			_shieldType.toCharArray(st_devicename, sizeof(st_devicename));
+		}
+		Serial.print(F("hostName = "));
+		Serial.println(st_devicename);
+
+		bool result = WiFi.setHostname(st_devicename);
+		Serial.print(F("setHostname returned "));
+		Serial.println(result);
 
 		if (st_DHCP == false)
 		{
@@ -146,7 +173,7 @@ namespace st
 		Serial.print(F("serverPort = "));
 		Serial.println(st_serverPort);
 		Serial.print(F("MAC Address = "));
-		Serial.println(WiFi.macAddress());
+		Serial.println(strMAC);
 		Serial.println(F(""));
 		Serial.print(F("SSID = "));
 		Serial.println(st_ssid);
@@ -194,7 +221,7 @@ namespace st
 
 				previousMillis = millis();
 
-				if (RSSIsendInterval < 60000)
+				if (RSSIsendInterval < RSSI_TX_INTERVAL)
 				{
 					RSSIsendInterval = RSSIsendInterval + 1000;
 				}
@@ -274,6 +301,7 @@ namespace st
 					Serial.println(tempString);
 				}
 				//Pass the message to user's SmartThings callout function
+				tempString.replace("%20", " ");  //Clean up for Hubitat
 				_calloutFunction(tempString);
 			}
 
@@ -300,7 +328,9 @@ namespace st
 			//init();
 		}
 
-		//Make sure the client is stopped, to free up socket for new conenction
+		//WiFiClient st_client;
+
+		//Make sure the client is stopped, to free up socket for new connection
 		st_client.stop();
 
 		if (st_client.connect(st_hubIP, st_hubPort))
@@ -311,10 +341,11 @@ namespace st
 			st_client.print(F(":"));
 			st_client.println(st_hubPort);
 			st_client.println(F("CONTENT-TYPE: text"));
+            st_client.println(F("CONNECTION: CLOSE"));
 			st_client.print(F("CONTENT-LENGTH: "));
 			st_client.println(message.length());
 			st_client.println();
-			st_client.println(message);
+			st_client.print(message);
 		}
 		else
 		{
@@ -364,17 +395,34 @@ namespace st
 
 		}
 
+        // Wait for a response
+        unsigned long timeout = millis();
+        while(!st_client.available())
+        {
+            if(millis() - timeout > 1000)
+            {
+                Serial.println(F("Post request timed out\n"));
+                st_client.stop();
+                return;
+            }
+        }
+
+
 		//if (_isDebugEnabled) { Serial.println(F("WiFi.send(): Reading for reply data "));}
 		// read any data returned from the POST
-		while (st_client.connected()) {
-			//while (st_client.available()) {
+        //while (st_client.connected()) {
+        while (st_client.available() && st_client.connected()) {
 			char c = st_client.read(); //gets byte from ethernet buffer
-									   //if (_isDebugEnabled) { Serial.print(c); } //prints byte to serial monitor
-									   //}
+            /*if((int) c == 255)
+            {
+                if(_isDebugEnabled)
+                    Serial.println(F("Breaking due to invalid value"));
+                break;
+            }*/
+            if (_isDebugEnabled) { Serial.print(c); } //prints byte to serial monitor
 		}
 
 		delay(1);
 		st_client.stop();
 	}
-
 }

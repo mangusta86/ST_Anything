@@ -6,7 +6,7 @@
 //			  It inherits from the st::Executor class.
 //
 //			  Create an instance of this class in your sketch's global variable section
-//			  For Example:  st::EX_RGBW_Dim executor1("rgbSwitch1", PIN_R, PIN_G, PIN_B, true, 0, 1, 2);
+//			  For Example:  st::EX_RGBW_Dim executor1("rgbwSwitch1", PIN_R, PIN_G, PIN_B, PIN_W, true, 0, 1, 2, 3);
 //
 //			  st::EX_RGBW_Dim() constructor requires the following arguments
 //				- String &name - REQUIRED - the name of the object - must match the Groovy ST_Anything DeviceType tile name.
@@ -29,6 +29,7 @@
 //    2017-08-30  Dan Ogorchock  Modified comment section above to comply with new Parent/Child Device Handler requirements
 //    2017-10-06  Allan (vseven) Modified original code from EX_Switch_Dim to be used for RGB lighting
 //    2017-10-12  Allan (vseven) Modified EX_RGB_Dim for support of a White LEd channel
+//    2020-06-09  Dan Ogorchock  Scaled the 8bit values to 10bit for ESP8266 "analogWrite()"
 //
 //******************************************************************************************
 #ifndef ST_EX_RGBW_Dim
